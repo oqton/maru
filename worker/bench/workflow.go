@@ -92,11 +92,14 @@ type (
 	}
 
 	metricValue struct {
-		Persistence    *int     `json:"persistence"`
-		HistoryService *int     `json:"historyService"`
-		PersistenceCpu *int     `json:"persistenceCpu"`
-		HistoryCpu     *int     `json:"historyCpu"`
-		HistoryMemory  *float64 `json:"historyMemory"`
+		Persistence         *int                      `json:"persistence"`
+		HistoryService      *int                      `json:"historyService"`
+		ConfigurableMetrics []configurableMetricValue `json:"ConfigurableMetrics"`
+	}
+
+	configurableMetricValue struct {
+		Cpu    *int     `json:"Cpu"`
+		Memory *float64 `json:"Memory"`
 	}
 
 	benchWorkflow struct {
@@ -210,9 +213,9 @@ func (w *benchWorkflow) setupQueries(res []histogramValue, startTime time.Time) 
 		return err
 	}
 
-	if err := workflow.SetQueryHandler(w.ctx, "metrics", func(input []byte) (string, error) {
+	if err := workflow.SetQueryHandler(w.ctx, "metrics", func(metricsContainerString []string) (string, error) {
 		endTime := startTime.Add(time.Duration(w.request.Report.IntervalInSeconds*len(res)) * time.Second)
-		values, err := w.collectMetrics(startTime, endTime)
+		values, err := w.collectMetrics(metricsContainerString, startTime, endTime)
 		if err != nil {
 			return "", err
 		}
@@ -222,17 +225,17 @@ func (w *benchWorkflow) setupQueries(res []histogramValue, startTime time.Time) 
 		return err
 	}
 
-	if err := workflow.SetQueryHandler(w.ctx, "metrics_csv", func(input []byte) (string, error) {
-		endTime := startTime.Add(time.Duration(w.request.Report.IntervalInSeconds*len(res)) * time.Second)
-		values, err := w.collectMetrics(startTime, endTime)
-		if err != nil {
-			return "", err
-		}
+	// if err := workflow.SetQueryHandler(w.ctx, "metrics_csv", func(metricsContainerString []string) (string, error) {
+	// 	endTime := startTime.Add(time.Duration(w.request.Report.IntervalInSeconds*len(res)) * time.Second)
+	// 	values, err := w.collectMetrics(metricsContainerString, startTime, endTime)
+	// 	if err != nil {
+	// 		return "", err
+	// 	}
 
-		return w.printMetricsCsv(values), nil
-	}); err != nil {
-		return err
-	}
+	// 	return w.printMetricsCsv(values), nil
+	// }); err != nil {
+	// 	return err
+	// }
 
 	return nil
 }
@@ -252,35 +255,36 @@ func (w *benchWorkflow) withActivityOptions() workflow.Context {
 	return workflow.WithActivityOptions(w.ctx, ao)
 }
 
-func (w *benchWorkflow) collectMetrics(startTime, endTime time.Time) ([]metricValue, error) {
-	updates, err := w.queryPrometheusHistogram("persistence_latency_bucket{type='history'}", startTime, endTime)
+func (w *benchWorkflow) collectMetrics(metricsContainerString []string, startTime, endTime time.Time) ([]metricValue, error) {
+	updates, err := w.queryPrometheusHistogram("persistence_latency_bucket{service_name='history'}", startTime, endTime)
 	if err != nil {
 		return nil, errors.Wrapf(err, "query UpdateWorkflowExecution")
 	}
 
-	appends, err := w.queryPrometheusHistogram("persistence_latency_bucket{type='history'}", startTime, endTime)
+	appends, err := w.queryPrometheusHistogram("persistence_latency_bucket{service_name='history'}", startTime, endTime)
 	if err != nil {
 		return nil, errors.Wrapf(err, "query AppendHistoryNodes")
 	}
 
-	services, err := w.queryPrometheusHistogram("service_latency_bucket{type='history'}", startTime, endTime)
+	services, err := w.queryPrometheusHistogram("service_latency_bucket{service_name='history'}", startTime, endTime)
 	if err != nil {
 		return nil, errors.Wrapf(err, "query service latency")
 	}
 
-	historyCpus, err := w.queryPrometheusValues("sum(rate(container_cpu_usage_seconds_total{container=\"temporal-history\"}[2m]))", startTime, endTime)
-	if err != nil {
-		return nil, errors.Wrapf(err, "query history CPU")
-	}
+	cpuValues := [][]float64{}
+	memValues := [][]float64{}
+	for _, metricContainerString := range metricsContainerString {
+		cpus, err := w.queryPrometheusValues(fmt.Sprintf("sum(rate(container_cpu_usage_seconds_total{%s}[2m]))", metricContainerString), startTime, endTime)
+		if err != nil {
+			return nil, errors.Wrapf(err, fmt.Sprintf("query %s CPU", metricContainerString))
+		}
+		cpuValues = append(cpuValues, cpus)
 
-	historyMem, err := w.queryPrometheusValues("max(container_memory_working_set_bytes{container=\"temporal-history\"})", startTime, endTime)
-	if err != nil {
-		return nil, errors.Wrapf(err, "query history memory")
-	}
-
-	persistenceCpus, err := w.queryPrometheusValues("sum(rate(container_cpu_usage_seconds_total{container=\"cass-cassandra\"}[2m]))", startTime, endTime)
-	if err != nil {
-		return nil, errors.Wrapf(err, "query history CPU")
+		mem, err := w.queryPrometheusValues(fmt.Sprintf("max(container_memory_working_set_bytes{%s})", metricContainerString), startTime, endTime)
+		if err != nil {
+			return nil, errors.Wrapf(err, fmt.Sprintf("query %s memory", metricContainerString))
+		}
+		memValues = append(memValues, mem)
 	}
 
 	values := make([]metricValue, len(updates))
@@ -300,15 +304,18 @@ func (w *benchWorkflow) collectMetrics(startTime, endTime time.Time) ([]metricVa
 		if len(services) > i {
 			value.HistoryService = convert(services[i])
 		}
-		if len(persistenceCpus) > i {
-			value.PersistenceCpu = convert(persistenceCpus[i])
+		configMetrics := []configurableMetricValue{}
+		for j, _ := range cpuValues {
+			configMetric := configurableMetricValue{}
+			if len(cpuValues[j]) > i {
+				configMetric.Cpu = convert(cpuValues[j][i])
+			}
+			if len(memValues[j]) > i {
+				configMetric.Memory = &memValues[j][i]
+			}
+			configMetrics = append(configMetrics, configMetric)
 		}
-		if len(historyCpus) > i {
-			value.HistoryCpu = convert(historyCpus[i])
-		}
-		if len(historyMem) > i {
-			value.HistoryMemory = &historyMem[i]
-		}
+		value.ConfigurableMetrics = configMetrics
 		values[i] = value
 	}
 	return values, nil
@@ -417,51 +424,51 @@ func (w *benchWorkflow) printHistogramCsv(values []histogramValue) string {
 	return strings.Join(lines, "\n")
 }
 
-func (w *benchWorkflow) printMetricsCsv(values []metricValue) string {
-	separator := ";"
-	if w.request.Report.CsvSeparator != "" {
-		separator = w.request.Report.CsvSeparator
-	}
-	interval := w.request.Report.IntervalInSeconds
-	header := strings.Join([]string{
-		"Time (seconds)",
-		"Persistence Latency (ms)",
-		"History Service Latency (ms)",
-		"Persistence CPU (mcores)",
-		"History Service CPU (mcores)",
-		"History Service Memory Working Set (MB)",
-	}, separator)
-	lines := []string{header}
-	for i, v := range values {
-		var pv string
-		if v.Persistence != nil {
-			pv = strconv.Itoa(*v.Persistence)
-		}
-		var hv string
-		if v.HistoryService != nil {
-			hv = strconv.Itoa(*v.HistoryService)
-		}
-		var pcpu string
-		if v.PersistenceCpu != nil {
-			pcpu = strconv.Itoa(*v.PersistenceCpu)
-		}
-		var hcpu string
-		if v.HistoryCpu != nil {
-			hcpu = strconv.Itoa(*v.HistoryCpu)
-		}
-		var hmem string
-		if v.HistoryMemory != nil {
-			hmem = strconv.Itoa(int(*v.HistoryMemory / 1048576.0))
-		}
-		line := strings.Join([]string{
-			strconv.Itoa((i + 1) * interval),
-			pv,
-			hv,
-			pcpu,
-			hcpu,
-			hmem,
-		}, separator)
-		lines = append(lines, line)
-	}
-	return strings.Join(lines, "\n")
-}
+// func (w *benchWorkflow) printMetricsCsv(values []metricValue) string {
+// 	separator := ";"
+// 	if w.request.Report.CsvSeparator != "" {
+// 		separator = w.request.Report.CsvSeparator
+// 	}
+// 	interval := w.request.Report.IntervalInSeconds
+// 	header := strings.Join([]string{
+// 		"Time (seconds)",
+// 		"Persistence Latency (ms)",
+// 		"History Service Latency (ms)",
+// 		"Persistence CPU (mcores)",
+// 		"History Service CPU (mcores)",
+// 		"History Service Memory Working Set (MB)",
+// 	}, separator)
+// 	lines := []string{header}
+// 	for i, v := range values {
+// 		var pv string
+// 		if v.Persistence != nil {
+// 			pv = strconv.Itoa(*v.Persistence)
+// 		}
+// 		var hv string
+// 		if v.HistoryService != nil {
+// 			hv = strconv.Itoa(*v.HistoryService)
+// 		}
+// 		var pcpu string
+// 		if v.PersistenceCpu != nil {
+// 			pcpu = strconv.Itoa(*v.PersistenceCpu)
+// 		}
+// 		var hcpu string
+// 		if v.HistoryCpu != nil {
+// 			hcpu = strconv.Itoa(*v.HistoryCpu)
+// 		}
+// 		var hmem string
+// 		if v.HistoryMemory != nil {
+// 			hmem = strconv.Itoa(int(*v.HistoryMemory / 1048576.0))
+// 		}
+// 		line := strings.Join([]string{
+// 			strconv.Itoa((i + 1) * interval),
+// 			pv,
+// 			hv,
+// 			pcpu,
+// 			hcpu,
+// 			hmem,
+// 		}, separator)
+// 		lines = append(lines, line)
+// 	}
+// 	return strings.Join(lines, "\n")
+// }
