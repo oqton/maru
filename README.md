@@ -142,7 +142,7 @@ You can tweak the parameters of the benchmark scenario by adjusting the JSON fil
 {
     "steps": [{
         "count": 12000,
-        "ratePerSecond": 20,
+        "ratePerMinute": 20,
         "concurrency": 5
     }],
     "workflow": {
@@ -163,8 +163,8 @@ Here are all the parameters you may configure:
 
 - `steps` - An array that defines one or more steps of the load test.
 - `steps[i].count` - The total number of target worflow executions for a bench run.
-- `steps[i].ratePerSecond` - The maximum number of workflow executions to start per second (rate limiting). By default, no rate limiting applies.
-- `steps[i].concurrency` - The number of parallel activities that bench will use to start target workflows. Can be useful when `ratePerSecond` is too high for a single activity to keep up. Defaults to `ratePerSecond` divided by `10`.
+- `steps[i].ratePerMinute` - The maximum number of workflow executions to start per second (rate limiting). By default, no rate limiting applies.
+- `steps[i].concurrency` - The number of parallel activities that bench will use to start target workflows. Can be useful when `ratePerMinute` is too high for a single activity to keep up. Defaults to `ratePerMinute` divided by `10`.
 - `workflow.name` - The name of a workflow to be used as the testing target. The bench will start `step[*].count` of these workflows.
 - `workflow.taskQueue` - The name of the task queue to use when starting the target workflow.
 - `workflow.args` - Arguments to send to the target workflows. This must match the shape of the target workflow's inputs.

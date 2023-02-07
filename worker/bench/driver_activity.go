@@ -78,7 +78,7 @@ func (d *benchDriver) run() error {
 
 	limit := rate.Inf
 	if d.request.Rate > 0 {
-		limit = rate.Every(time.Second / time.Duration(d.request.Rate))
+		limit = rate.Every(time.Minute / time.Duration(d.request.Rate))
 	}
 	limiter := rate.NewLimiter(limit, 1)
 	for i := idx; i < d.request.BatchSize; i++ {

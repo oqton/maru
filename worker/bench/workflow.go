@@ -61,8 +61,8 @@ type (
 		Count int `json:"count"`
 		// Concurrency defines how many driver activities should be started in parallel.
 		Concurrency int `json:"concurrency"`
-		// RatePerSecond is the maximum number of workflows to start per second.
-		RatePerSecond int `json:"ratePerSecond"`
+		// RatePerMinute is the maximum number of workflows to start per second.
+		RatePerMinute int `json:"ratePerMinute"`
 	}
 	benchWorkflowRequestWorkflow struct {
 		// Name is the name of the workflow to run for benchmarking (workflow under test).
@@ -148,8 +148,8 @@ func (w *benchWorkflow) executeDriverActivities(stepIndex int, step benchWorkflo
 		if step.Count%concurrency != 0 {
 			return errors.Errorf("request count %d must be a multiple of concurrency %d", step.Count, concurrency)
 		}
-	case step.RatePerSecond > 10:
-		concurrency = step.RatePerSecond / 10
+	case step.RatePerMinute > 10:
+		concurrency = step.RatePerMinute / 10
 	}
 
 	var futures []workflow.Future
@@ -161,7 +161,7 @@ func (w *benchWorkflow) executeDriverActivities(stepIndex int, step benchWorkflo
 			benchDriverActivityRequest{
 				BaseID:        fmt.Sprintf("%s-%d-%d", w.baseID, stepIndex, i),
 				BatchSize:     step.Count / concurrency,
-				Rate:          step.RatePerSecond / concurrency,
+				Rate:          step.RatePerMinute / concurrency,
 				WorkflowName:  w.request.Workflow.Name,
 				TaskQueueName: w.request.Workflow.TaskQueue,
 				Parameters:    w.request.Workflow.Args,

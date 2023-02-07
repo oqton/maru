@@ -1,14 +1,14 @@
 {
     "steps": [{
         "count": 100,
-        "ratePerSecond": 5
+        "ratePerMinute": 5
     },{
         "count": 1000,
-        "ratePerSecond": 50,
+        "ratePerMinute": 50,
         "concurrency": 10
     },{
         "count": 100,
-        "ratePerSecond": 5
+        "ratePerMinute": 5
     }],
     "workflow": {
         "name": "basic-workflow",
